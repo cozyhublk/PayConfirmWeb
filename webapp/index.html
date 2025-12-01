@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SwiftAlert Live Monitor</title>
+    <style>
+        /* --- 1. DESIGN & STYLING --- */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 500px;
+        }
+
+        /* The Big Card (Latest Transaction) */
+        .live-card {
+            background: white;
+            padding: 40px 20px;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            text-align: center;
+            margin-bottom: 30px;
+            border: 2px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .label {
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-size: 0.8rem;
+            color: #888;
+            margin-bottom: 10px;
+        }
+
+        .amount-big {
+            font-size: 4rem;
+            font-weight: 800;
+            margin: 0;
+            line-height: 1;
+        }
+
+        .time-ago {
+            margin-top: 15px;
+            color: #aaa;
+            font-size: 0.9rem;
+        }
+
+        /* History List */
+        .history-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+            padding-left: 5px;
+        }
+
+        .history-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .history-item {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 12px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            animation: slideIn 0.5s ease-out;
+        }
+
+        /* Color States */
+        .credit { color: #00b894; } /* Green */
+        .debit { color: #d63031; }  /* Red */
+        .bg-credit { border-color: #00b894; background-color: #f0fff4; }
+        .bg-debit { border-color: #d63031; background-color: #fff0f0; }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        
+        <div id="status" style="text-align: center; font-size: 12px; color: #aaa; margin-bottom: 10px;">
+            Connecting to Live Feed...
+        </div>
+
+        <div class="live-card" id="main-card">
+            <div class="label">Latest Transaction</div>
+            <div class="amount-big" id="main-amount">---</div>
+            <div class="label" id="main-type" style="margin-top: 10px; font-weight: bold;">WAITING...</div>
+            <div class="time-ago" id="main-time"></div>
+        </div>
+
+        <div class="history-title">Recent History</div>
+        <ul class="history-list" id="history-list">
+            </ul>
+    </div>
+
+    <audio id="notify-sound" src="data:audio/wav;base64,UklGRl9vT1dAVEZNVZh...."></audio>
+    <script type="module">
+        // Import Firebase (No download needed, it pulls from the web)
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
+        import { getDatabase, ref, onChildAdded, query, limitToLast } 
+        from "https://www.gstatic.com/firebasejs/10.7.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBhPfi0lL5NCusG9tuXDIMtSJT_j7zYXrk",
+            authDomain: "payconfirmapp.firebaseapp.com",
+            databaseURL: "https://payconfirmapp-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "payconfirmapp",
+            storageBucket: "payconfirmapp.firebasestorage.app",
+            messagingSenderId: "709314915334",
+            appId: "1:709314915334:web:f2f6a4a452eda0a2876787",
+            measurementId: "G-VR3RX6RJFJ"
+        };
+
+        // Initialize
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        // Define Shop ID (Hardcoded for now, or use URL ?id=shop_1)
+        const shopId = "shop_test"; // Make sure this matches what you used in PowerShell!
+        
+        const statusEl = document.getElementById('status');
+        const listEl = document.getElementById('history-list');
+        const mainAmount = document.getElementById('main-amount');
+        const mainType = document.getElementById('main-type');
+        const mainTime = document.getElementById('main-time');
+        const mainCard = document.getElementById('main-card');
+
+        // Play sound helper
+        const audio = new Audio('https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg'); // A funny sample sound
+
+        // Listen for the last 10 transactions
+        const recentTransactions = query(ref(db, `shops/${shopId}/transactions`), limitToLast(10));
+
+        // Connect
+        statusEl.innerHTML = "🟢 Live Connected | Waiting for payments...";
+
+        // EVENT: When a new payment comes in
+        onChildAdded(recentTransactions, (snapshot) => {
+            const data = snapshot.val();
+            
+            // 1. Update the Big Card
+            updateMainCard(data);
+
+            // 2. Add to History List
+            addToHistory(data);
+
+            // 3. Play Sound (Only if transaction is very recent - avoids noise on page load)
+            const isRecent = (new Date().getTime() - new Date(data.timestamp).getTime()) < 60000; // 1 minute
+            if (isRecent) {
+                audio.play().catch(e => console.log("Click page to enable audio"));
+            }
+        });
+
+        function updateMainCard(data) {
+            mainAmount.innerText = data.amount; // e.g. "5,000.00"
+            mainType.innerText = data.type;     // e.g. "CREDIT"
+            mainTime.innerText = new Date(data.timestamp).toLocaleTimeString();
+
+            // Reset classes
+            mainAmount.className = "amount-big";
+            mainCard.className = "live-card";
+
+            if (data.type === 'CREDIT') {
+                mainAmount.classList.add('credit');
+                mainCard.classList.add('bg-credit');
+            } else {
+                mainAmount.classList.add('debit');
+                mainCard.classList.add('bg-debit');
+            }
+        }
+
+        function addToHistory(data) {
+            const li = document.createElement('li');
+            li.className = "history-item";
+            
+            const isCredit = data.type === 'CREDIT';
+            const colorClass = isCredit ? 'credit' : 'debit';
+            const sign = isCredit ? '+' : '-';
+
+            li.innerHTML = `
+                <div>
+                    <div style="font-weight:bold; color:#555;">${data.originalText.substring(0, 15)}...</div>
+                    <div style="font-size:0.8rem; color:#aaa;">${new Date(data.timestamp).toLocaleTimeString()}</div>
+                </div>
+                <div style="font-size:1.2rem; font-weight:bold;" class="${colorClass}">
+                    ${sign} ${data.amount}
+                </div>
+            `;
+            
+            // Add to top of list
+            listEl.prepend(li);
+        }
+    </script>
+</body>
+</html>

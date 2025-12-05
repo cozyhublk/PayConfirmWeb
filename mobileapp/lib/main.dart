@@ -229,10 +229,7 @@ void onStart(ServiceInstance service) async {
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'userId': 'shop_test',
-          'smsText': 'HNB Alert: A/C Credited Rs. 2,000.00.',
-        }),
+        body: jsonEncode({'userId': 'shop_test', 'smsText': ' ${sms.body}'}),
       );
       print("API Response: ${response.statusCode} - ${response.body}");
     } catch (e) {

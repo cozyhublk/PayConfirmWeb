@@ -7,11 +7,7 @@ class NumberDialog extends StatefulWidget {
   final AllowedNumber? number;
   final Function(AllowedNumber) onSave;
 
-  const NumberDialog({
-    super.key,
-    this.number,
-    required this.onSave,
-  });
+  const NumberDialog({super.key, this.number, required this.onSave});
 
   @override
   State<NumberDialog> createState() => _NumberDialogState();
@@ -27,7 +23,9 @@ class _NumberDialogState extends State<NumberDialog> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.number?.name ?? '');
-    _phoneController = TextEditingController(text: widget.number?.phoneNumber ?? '');
+    _phoneController = TextEditingController(
+      text: widget.number?.phoneNumber ?? '',
+    );
   }
 
   @override
@@ -62,7 +60,9 @@ class _NumberDialogState extends State<NumberDialog> {
 
     setState(() => _isLoading = true);
 
-    final normalizedPhone = PhoneNumberUtils.normalizePhoneNumber(_phoneController.text);
+    final normalizedPhone = PhoneNumberUtils.normalizePhoneNumber(
+      _phoneController.text,
+    );
     final number = AllowedNumber(
       id: widget.number?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
       phoneNumber: normalizedPhone,
@@ -71,7 +71,7 @@ class _NumberDialogState extends State<NumberDialog> {
     );
 
     widget.onSave(number);
-    
+
     if (mounted) {
       Navigator.of(context).pop();
     }
@@ -80,9 +80,7 @@ class _NumberDialogState extends State<NumberDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Form(
@@ -92,7 +90,9 @@ class _NumberDialogState extends State<NumberDialog> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                widget.number == null ? 'Add Allowed Number' : 'Edit Allowed Number',
+                widget.number == null
+                    ? 'Add Allowed Number'
+                    : 'Edit Allowed Number',
                 style: const TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
@@ -119,7 +119,7 @@ class _NumberDialogState extends State<NumberDialog> {
                 controller: _phoneController,
                 decoration: InputDecoration(
                   labelText: 'Phone Number',
-                  hintText: 'Enter phone number',
+                  hintText: 'Enter phone number (e.g., +1234567890)',
                   prefixIcon: const Icon(Icons.phone),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -138,14 +138,19 @@ class _NumberDialogState extends State<NumberDialog> {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
-                    onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+                    onPressed: _isLoading
+                        ? null
+                        : () => Navigator.of(context).pop(),
                     child: const Text('Cancel'),
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton(
                     onPressed: _isLoading ? null : _handleSave,
                     style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -167,4 +172,3 @@ class _NumberDialogState extends State<NumberDialog> {
     );
   }
 }
-

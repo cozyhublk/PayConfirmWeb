@@ -10,8 +10,10 @@ class AllowedNumbersService {
   static Future<List<AllowedNumber>> getAllAllowedNumbers() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      // Reload to ensure we have the latest data
+      await prefs.reload();
       final jsonString = prefs.getString(_storageKey);
-      
+
       if (jsonString == null || jsonString.isEmpty) {
         return [];
       }
@@ -30,12 +32,15 @@ class AllowedNumbersService {
   static Future<bool> addAllowedNumber(AllowedNumber number) async {
     try {
       final numbers = await getAllAllowedNumbers();
-      
-      // Check for duplicates
-      final isDuplicate = numbers.any((n) => 
-        n.phoneNumber == number.phoneNumber
+
+      // Check for duplicates using phone number matching
+      final isDuplicate = numbers.any(
+        (n) => PhoneNumberUtils.matchPhoneNumber(
+          n.phoneNumber,
+          number.phoneNumber,
+        ),
       );
-      
+
       if (isDuplicate) {
         return false;
       }
@@ -53,7 +58,7 @@ class AllowedNumbersService {
     try {
       final numbers = await getAllAllowedNumbers();
       final index = numbers.indexWhere((n) => n.id == number.id);
-      
+
       if (index == -1) {
         return false;
       }
@@ -82,9 +87,34 @@ class AllowedNumbersService {
   static Future<bool> isNumberAllowed(String phoneNumber) async {
     try {
       final numbers = await getAllAllowedNumbers();
-      return numbers.any((n) => 
-        PhoneNumberUtils.matchPhoneNumber(n.phoneNumber, phoneNumber)
+      print(
+        'Checking if $phoneNumber is allowed. Total allowed numbers: ${numbers.length}',
       );
+
+      for (var number in numbers) {
+        final normalizedStored = PhoneNumberUtils.normalizePhoneNumber(
+          number.phoneNumber,
+        );
+        final normalizedReceived = PhoneNumberUtils.normalizePhoneNumber(
+          phoneNumber,
+        );
+        final matches = PhoneNumberUtils.matchPhoneNumber(
+          number.phoneNumber,
+          phoneNumber,
+        );
+        print(
+          '  Comparing stored: "${number.phoneNumber}" (normalized: "$normalizedStored") with received: "$phoneNumber" (normalized: "$normalizedReceived") -> Match: $matches',
+        );
+      }
+
+      final result = numbers.any(
+        (n) => PhoneNumberUtils.matchPhoneNumber(n.phoneNumber, phoneNumber),
+      );
+
+      print(
+        'Final result: $phoneNumber is ${result ? "ALLOWED" : "NOT ALLOWED"}',
+      );
+      return result;
     } catch (e) {
       print('Error checking allowed number: $e');
       return false;
@@ -97,11 +127,22 @@ class AllowedNumbersService {
       final prefs = await SharedPreferences.getInstance();
       final jsonList = numbers.map((n) => n.toJson()).toList();
       final jsonString = jsonEncode(jsonList);
-      return await prefs.setString(_storageKey, jsonString);
+
+      // Save the data
+      final success = await prefs.setString(_storageKey, jsonString);
+
+      if (success) {
+        // Reload to ensure the data is persisted and cached correctly
+        await prefs.reload();
+        print('Successfully saved ${numbers.length} allowed number(s)');
+      } else {
+        print('Failed to save allowed numbers - setString returned false');
+      }
+
+      return success;
     } catch (e) {
       print('Error saving allowed numbers: $e');
       return false;
     }
   }
 }
-

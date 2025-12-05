@@ -85,7 +85,7 @@ class SmsCard extends StatelessWidget {
                   gradient: LinearGradient(
                     colors: [
                       avatarColor,
-                      avatarColor.withOpacity(0.7),
+                      avatarColor.withValues(alpha: 0.7),
                     ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,

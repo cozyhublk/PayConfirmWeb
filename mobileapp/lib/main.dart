@@ -12,9 +12,12 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'services/allowed_numbers_service.dart';
 import 'services/phone_number_utils.dart';
+import 'services/user_service.dart';
 import 'widgets/sms_card.dart';
 import 'widgets/empty_state.dart';
 import 'pages/allowed_numbers_page.dart';
+import 'pages/settings_page.dart';
+import 'pages/splash_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,6 +31,15 @@ Future<void> main() async {
   } catch (e) {
     print('Failed to create notification channel: $e');
   }
+
+  // Initialize user ID on first app load
+  Future.microtask(() async {
+    try {
+      await UserService.initializeUserId();
+    } catch (e) {
+      print('Failed to initialize user ID: $e');
+    }
+  });
 
   // Start app
   runApp(const SmsApp());
@@ -84,17 +96,22 @@ Future<void> _createNotificationChannel() async {
   try {
     final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
-    // Initialize notification settings - no custom icon (use default)
-    const androidSettings = AndroidInitializationSettings('');
+    // Initialize notification settings - use default launcher icon
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
     const initSettings = InitializationSettings(android: androidSettings);
     await flutterLocalNotificationsPlugin.initialize(initSettings);
 
     // Create notification channel - MUST exist before service starts
+    // Using high importance for persistent foreground service
     const channel = AndroidNotificationChannel(
       'sms_reader_channel',
       'SMS Reader Service',
       description: 'Keeps SMS reader running in background',
-      importance: Importance.low,
+      importance: Importance.high, // Changed to high for persistent service
+      enableVibration: false,
+      playSound: false,
     );
 
     await flutterLocalNotificationsPlugin
@@ -110,17 +127,43 @@ Future<void> _createNotificationChannel() async {
 
 @pragma('vm:entry-point')
 Future<void> initializeService() async {
+  // Ensure notification channel exists before starting service
+  try {
+    final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
+    const initSettings = InitializationSettings(android: androidSettings);
+    await flutterLocalNotificationsPlugin.initialize(initSettings);
+
+    const channel = AndroidNotificationChannel(
+      'sms_reader_channel',
+      'SMS Reader Service',
+      description: 'Keeps SMS reader running in background',
+      importance: Importance.low,
+      enableVibration: false,
+      playSound: false,
+    );
+
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(channel);
+  } catch (e) {
+    print('Error ensuring notification channel exists: $e');
+  }
+
   final service = FlutterBackgroundService();
   await service.configure(
     androidConfiguration: AndroidConfiguration(
       onStart: onStart,
-      autoStart: false, // Start manually after channel is ready
-      isForegroundMode:
-          false, // Temporarily disabled to debug notification issue
+      autoStart: true, // Auto-start service
+      isForegroundMode: true, // Enable foreground mode for persistent service
       autoStartOnBoot: true, // Auto-start on device boot
       notificationChannelId: 'sms_reader_channel',
       initialNotificationTitle: 'SMS Reader',
-      initialNotificationContent: 'Running in background',
+      initialNotificationContent: 'Monitoring SMS messages',
       foregroundServiceNotificationId: 888,
     ),
     iosConfiguration:
@@ -159,40 +202,17 @@ void onStart(ServiceInstance service) async {
   });
 
   if (service is AndroidServiceInstance) {
-    // Commented out icon loading - not needed for background service
-    // final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
-    //
-    // // Initialize notification settings - no custom icon (use default)
-    // const androidSettings = AndroidInitializationSettings('');
-    // const initSettings = InitializationSettings(android: androidSettings);
-    // await flutterLocalNotificationsPlugin.initialize(initSettings);
-    //
-    // // Create notification channel
-    // const channel = AndroidNotificationChannel(
-    //   'sms_reader_channel',
-    //   'SMS Reader Service',
-    //   description: 'Keeps SMS reader running in background',
-    //   importance: Importance.low,
-    // );
-    //
-    // await flutterLocalNotificationsPlugin
-    //     .resolvePlatformSpecificImplementation<
-    //       AndroidFlutterLocalNotificationsPlugin
-    //     >()
-    //     ?.createNotificationChannel(channel);
-
-    // Only set foreground notification if foreground mode is enabled
-    // service.setForegroundNotificationInfo(
-    //   title: 'SMS Reader Active',
-    //   content: 'Listening for incoming SMS messages',
-    // );
+    // When isForegroundMode is true in configuration, the service automatically
+    // creates the notification. We just need to ensure it stays in foreground.
+    // Don't manually set notification here as it's already handled by the service.
 
     // Handle commands from UI
-    // service.on('setAsForeground').listen((event) {
-    //   service.setAsForegroundService();
-    // });
+    service.on('setAsForeground').listen((event) {
+      service.setAsForegroundService();
+    });
     service.on('setAsBackground').listen((event) {
-      service.setAsBackgroundService();
+      // Don't allow switching to background - keep it foreground
+      service.setAsForegroundService();
     });
   }
 
@@ -223,13 +243,23 @@ void onStart(ServiceInstance service) async {
 
     // ---- API CALL HERE ----
     try {
+      // Get user ID from storage
+      final userId = await UserService.getUserId();
+
+      if (userId == null || userId.isEmpty) {
+        print(
+          'User ID not set - skipping API call. Please set user ID in app settings.',
+        );
+        return;
+      }
+
       final url = Uri.parse(
         "https://us-central1-payconfirmapp.cloudfunctions.net/swiftAlert",
       );
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'userId': 'shop_test', 'smsText': ' ${sms.body}'}),
+        body: jsonEncode({'userId': userId, 'smsText': ' ${sms.body}'}),
       );
       print("API Response: ${response.statusCode} - ${response.body}");
     } catch (e) {
@@ -237,11 +267,28 @@ void onStart(ServiceInstance service) async {
     }
   });
 
-  // 🔄 Optional: Periodic SMS check every 30s
+  // 🔄 Keep-alive mechanism - periodic check every 30s
   periodicTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
-    if (service is AndroidServiceInstance &&
-        await service.isForegroundService()) {
+    if (service is AndroidServiceInstance) {
       try {
+        // Ensure service stays in foreground mode
+        if (!(await service.isForegroundService())) {
+          print('Service not in foreground, switching to foreground mode...');
+          service.setAsForegroundService();
+        }
+
+        // Update notification to show service is alive (only if in foreground)
+        try {
+          service.setForegroundNotificationInfo(
+            title: 'SMS Reader Active',
+            content:
+                'Monitoring SMS messages - ${DateTime.now().toString().substring(11, 19)}',
+          );
+        } catch (e) {
+          print('Error updating notification: $e');
+        }
+
+        // Periodic SMS check
         final msgs = await AndroidSMSReader.fetchMessages(
           type: AndroidSMSType.inbox,
           start: 0,
@@ -249,7 +296,13 @@ void onStart(ServiceInstance service) async {
         );
         print('Periodic fetch: ${msgs.length} messages');
       } catch (e) {
-        print('Error in periodic fetch: $e');
+        print('Error in periodic keep-alive: $e');
+        // Try to restart foreground service if error occurs
+        try {
+          service.setAsForegroundService();
+        } catch (e2) {
+          print('Error restarting foreground service: $e2');
+        }
       }
     }
   });
@@ -261,7 +314,7 @@ class SmsApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Android SMS Reader Demo',
-      home: const SmsHomePage(),
+      home: const SplashPage(),
     );
   }
 }
@@ -395,8 +448,9 @@ class _SmsHomePageState extends State<SmsHomePage> {
       // Filter messages by allowed numbers
       final allowedNumbers = await AllowedNumbersService.getAllAllowedNumbers();
       final filtered = msgs.where((msg) {
-        if (allowedNumbers.isEmpty)
+        if (allowedNumbers.isEmpty) {
           return false; // Show nothing if no allowed numbers
+        }
         return allowedNumbers.any(
           (number) => PhoneNumberUtils.matchPhoneNumber(
             number.phoneNumber,
@@ -425,6 +479,45 @@ class _SmsHomePageState extends State<SmsHomePage> {
     ).push(MaterialPageRoute(builder: (context) => const AllowedNumbersPage()));
     // Reload messages after returning from allowed numbers page
     _loadMessages();
+  }
+
+  Future<void> _navigateToSettings() async {
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (context) => const SettingsPage()));
+  }
+
+  void _showSettingsMenu() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.phone, color: Colors.blue),
+              title: const Text('Allowed Numbers'),
+              onTap: () {
+                Navigator.pop(context);
+                _navigateToAllowedNumbers();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.settings, color: Colors.blue),
+              title: const Text('Settings'),
+              onTap: () {
+                Navigator.pop(context);
+                _navigateToSettings();
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -492,8 +585,8 @@ class _SmsHomePageState extends State<SmsHomePage> {
                     const SizedBox(width: 8),
                     IconButton(
                       icon: const Icon(Icons.settings, color: Colors.white),
-                      onPressed: _navigateToAllowedNumbers,
-                      tooltip: 'Manage Allowed Numbers',
+                      onPressed: _showSettingsMenu,
+                      tooltip: 'Settings',
                     ),
                   ],
                 ),

@@ -59,15 +59,19 @@ class _AllowedNumbersPageState extends State<AllowedNumbersPage> {
   }
 
   Future<void> _addNumber() async {
+    if (!mounted) return;
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    
     final result = await showDialog<AllowedNumber>(
       context: context,
       builder: (context) => NumberDialog(
         onSave: (number) async {
           final success = await AllowedNumbersService.addAllowedNumber(number);
           if (success && mounted) {
-            Navigator.of(context).pop(number);
+            navigator.pop(number);
           } else if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
+            messenger.showSnackBar(
               const SnackBar(content: Text('Number already exists or failed to add')),
             );
           }
@@ -86,6 +90,10 @@ class _AllowedNumbersPageState extends State<AllowedNumbersPage> {
   }
 
   Future<void> _editNumber(AllowedNumber number) async {
+    if (!mounted) return;
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    
     final result = await showDialog<AllowedNumber>(
       context: context,
       builder: (context) => NumberDialog(
@@ -93,9 +101,9 @@ class _AllowedNumbersPageState extends State<AllowedNumbersPage> {
         onSave: (updatedNumber) async {
           final success = await AllowedNumbersService.updateAllowedNumber(updatedNumber);
           if (success && mounted) {
-            Navigator.of(context).pop(updatedNumber);
+            navigator.pop(updatedNumber);
           } else if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
+            messenger.showSnackBar(
               const SnackBar(content: Text('Failed to update number')),
             );
           }

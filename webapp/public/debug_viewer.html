@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raw Database Viewer</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 20px;
+            background: #eee;
+        }
+
+        #output {
+            background: white;
+            padding: 20px;
+            white-space: pre-wrap;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🔍 Raw Database Viewer</h1>
+    <p>Live dump of "shops" node:</p>
+    <div id="output">Loading...</div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
+        import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBhPfi0lL5NCusG9tuXDIMtSJT_j7zYXrk",
+            authDomain: "payconfirmapp.firebaseapp.com",
+            databaseURL: "https://payconfirmapp-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "payconfirmapp",
+            storageBucket: "payconfirmapp.firebasestorage.app",
+            messagingSenderId: "709314915334",
+            appId: "1:709314915334:web:f2f6a4a452eda0a2876787",
+            measurementId: "G-VR3RX6RJFJ"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        // Listen to everything under 'shops'
+        const shopsRef = ref(db, 'shops');
+
+        onValue(shopsRef, (snapshot) => {
+            const data = snapshot.val();
+            const output = document.getElementById('output');
+
+            if (data) {
+                output.textContent = JSON.stringify(data, null, 4);
+            } else {
+                output.textContent = "No data found in 'shops' node.";
+            }
+        }, (error) => {
+            document.getElementById('output').textContent = "Error reading database: " + error.message + "\n(You might need to be authenticated if rules are strict)";
+        });
+    </script>
+</body>
+
+</html>

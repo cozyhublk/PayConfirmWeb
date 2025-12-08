@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -21,12 +22,31 @@
             max-width: 500px;
         }
 
+        /* Top Bar */
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+
+        .logout-btn {
+            background: none;
+            border: 1px solid #ccc;
+            padding: 5px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            color: #666;
+        }
+
         /* The Big Card (Latest Transaction) */
         .live-card {
             background: white;
             padding: 40px 20px;
             border-radius: 20px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
             text-align: center;
             margin-bottom: 30px;
             border: 2px solid transparent;
@@ -76,26 +96,54 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
             animation: slideIn 0.5s ease-out;
         }
 
         /* Color States */
-        .credit { color: #00b894; } /* Green */
-        .debit { color: #d63031; }  /* Red */
-        .bg-credit { border-color: #00b894; background-color: #f0fff4; }
-        .bg-debit { border-color: #d63031; background-color: #fff0f0; }
+        .credit {
+            color: #00b894;
+        }
+
+        /* Green */
+        .debit {
+            color: #d63031;
+        }
+
+        /* Red */
+        .bg-credit {
+            border-color: #00b894;
+            background-color: #f0fff4;
+        }
+
+        .bg-debit {
+            border-color: #d63031;
+            background-color: #fff0f0;
+        }
 
         @keyframes slideIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
     </style>
 </head>
+
 <body>
 
-    <div class="container">
-        
+    <div class="container" id="app_content" style="display: none;">
+
+        <div class="top-bar">
+            <div id="shop-name" style="font-weight: bold; color: #555;">Loading Shop...</div>
+            <button class="logout-btn" id="logout-btn">Logout</button>
+        </div>
+
         <div id="status" style="text-align: center; font-size: 12px; color: #aaa; margin-bottom: 10px;">
             Connecting to Live Feed...
         </div>
@@ -109,15 +157,17 @@
 
         <div class="history-title">Recent History</div>
         <ul class="history-list" id="history-list">
-            </ul>
+            <li style="text-align:center; color:#ccc; padding:20px;">No transactions today</li>
+        </ul>
     </div>
 
     <audio id="notify-sound" src="data:audio/wav;base64,UklGRl9vT1dAVEZNVZh...."></audio>
+
     <script type="module">
-        // Import Firebase (No download needed, it pulls from the web)
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
-        import { getDatabase, ref, onChildAdded, query, limitToLast } 
-        from "https://www.gstatic.com/firebasejs/10.7.0/firebase-database.js";
+        import { getDatabase, ref, onChildAdded, onValue, query, startAt, orderByKey, limitToLast }
+            from "https://www.gstatic.com/firebasejs/10.7.0/firebase-database.js";
+        import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBhPfi0lL5NCusG9tuXDIMtSJT_j7zYXrk",
@@ -130,52 +180,115 @@
             measurementId: "G-VR3RX6RJFJ"
         };
 
-        // Initialize
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
+        const auth = getAuth(app);
 
-        // Define Shop ID (Hardcoded for now, or use URL ?id=shop_1)
-        const shopId = "shop_test"; // Make sure this matches what you used in PowerShell!
-        
+        const appContent = document.getElementById("app_content");
         const statusEl = document.getElementById('status');
         const listEl = document.getElementById('history-list');
         const mainAmount = document.getElementById('main-amount');
         const mainType = document.getElementById('main-type');
         const mainTime = document.getElementById('main-time');
         const mainCard = document.getElementById('main-card');
+        const shopNameEl = document.getElementById('shop-name');
+        const logoutBtn = document.getElementById('logout-btn');
+        let hasNoData = true;
 
-        // Play sound helper
-        const audio = new Audio('https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg'); // A funny sample sound
+        const audio = new Audio('https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg');
 
-        // Listen for the last 10 transactions
-        const recentTransactions = query(ref(db, `shops/${shopId}/transactions`), limitToLast(10));
-
-        // Connect
-        statusEl.innerHTML = "🟢 Live Connected | Waiting for payments...";
-
-        // EVENT: When a new payment comes in
-        onChildAdded(recentTransactions, (snapshot) => {
-            const data = snapshot.val();
-            
-            // 1. Update the Big Card
-            updateMainCard(data);
-
-            // 2. Add to History List
-            addToHistory(data);
-
-            // 3. Play Sound (Only if transaction is very recent - avoids noise on page load)
-            const isRecent = (new Date().getTime() - new Date(data.timestamp).getTime()) < 60000; // 1 minute
-            if (isRecent) {
-                audio.play().catch(e => console.log("Click page to enable audio"));
-            }
+        // Logout Flow
+        logoutBtn.addEventListener("click", () => {
+            signOut(auth).then(() => {
+                window.location.href = "login.html";
+            });
         });
 
+        // Auth & Init Flow
+        onAuthStateChanged(auth, async (user) => {
+            if (!user) {
+                window.location.href = "login.html";
+                return;
+            }
+
+            // User Logged In
+            appContent.style.display = "block";
+            statusEl.innerText = "🔍 Loading Shop Profile...";
+
+            // 1. Get Shop ID linked to this user
+            const userRef = ref(db, `users/${user.uid}`);
+
+            // DEBUG: Show we are fetching
+            statusEl.innerHTML += "<br>Fetching user profile...";
+
+            onValue(userRef, (snapshot) => {
+                const userData = snapshot.val();
+
+                // DEBUG: Show raw user data
+                console.log("User Data:", userData);
+
+                if (!userData || !userData.shopId) {
+                    statusEl.innerHTML = `❌ Connected as ${user.email}<br>⚠️ ERROR: No 'shopId' found in database for this User UID.<br>Please use admin_seed.html to link UID: <b>${user.uid}</b> to a Shop ID.`;
+                    return;
+                }
+
+                const shopId = userData.shopId;
+                shopNameEl.innerText = `Shop ID: ${shopId}`;
+                startListening(shopId);
+            }, (error) => {
+                console.error("Error fetching user data:", error);
+                statusEl.innerText = "❌ Error fetching profile: " + error.message;
+            });
+        });
+
+        function startListening(shopId) {
+            statusEl.innerHTML = `🟢 Live | Listening: ${shopId}`;
+
+            // DEBUG: Verify path
+            console.log(`Listening to path: shops/${shopId}/transactions`);
+
+            // 2. Filter for TODAY only
+            // Transactions keys are often pushIDs (timestamp-based), but relying on `timestamp` field is safer for query order if indexed, 
+            // but for simplicity without complex indexing, we can filter client side or use pushID time.
+            // However, the best way for a "simple" app is to listen to the list and just hide old ones, 
+            // OR if the backend deletes old ones, we just listen to everything currently in DB.
+            // Since we implemented backend cleanup, we can just listen to the last 50 transactions and check date client-side.
+
+            const recentTransactions = query(ref(db, `shops/${shopId}/transactions`), limitToLast(50));
+
+            onChildAdded(recentTransactions, (snapshot) => {
+                const data = snapshot.val();
+                console.log("New Child:", data); // DEBUG
+
+                // DEBUGGING: Filter disabled to show ALL data
+                // const txnDate = new Date(data.timestamp);
+                // const today = new Date();
+                // today.setHours(0, 0, 0, 0);
+
+                // if (txnDate >= today) {
+                if (hasNoData) {
+                    listEl.innerHTML = ""; // Clear "No transactions" placeholder
+                    hasNoData = false;
+                }
+
+                updateMainCard(data);
+                addToHistory(data);
+
+                // Play Sound if recent
+                const txnDate = new Date(data.timestamp);
+                const isRecent = (new Date().getTime() - txnDate.getTime()) < 60000;
+                if (isRecent) {
+                    audio.play().catch(e => console.log("Click page to enable audio"));
+                }
+                // }
+            });
+        }
+
         function updateMainCard(data) {
-            mainAmount.innerText = data.amount; // e.g. "5,000.00"
-            mainType.innerText = data.type;     // e.g. "CREDIT"
+            mainAmount.innerText = data.amount;
+            mainType.innerText = data.type;
             mainTime.innerText = new Date(data.timestamp).toLocaleTimeString();
 
-            // Reset classes
             mainAmount.className = "amount-big";
             mainCard.className = "live-card";
 
@@ -191,7 +304,7 @@
         function addToHistory(data) {
             const li = document.createElement('li');
             li.className = "history-item";
-            
+
             const isCredit = data.type === 'CREDIT';
             const colorClass = isCredit ? 'credit' : 'debit';
             const sign = isCredit ? '+' : '-';
@@ -205,10 +318,10 @@
                     ${sign} ${data.amount}
                 </div>
             `;
-            
-            // Add to top of list
+
             listEl.prepend(li);
         }
     </script>
 </body>
+
 </html>

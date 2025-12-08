@@ -1,0 +1,10 @@
+{
+    "name": "payconfirm-webapp",
+    "version": "1.0.0",
+    "description": "Frontend for PayConfirm",
+    "scripts": {
+        "build": "powershell -Command \"if (!(Test-Path public)) { New-Item -ItemType Directory -Force -Path public }; Copy-Item -Path '*.html' -Destination 'public' -Force\""
+    },
+    "author": "",
+    "license": "ISC"
+}

@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/allowed_number.dart';
-import 'phone_number_utils.dart';
 
 class AllowedNumbersService {
   static const String _storageKey = 'allowed_numbers';
@@ -33,12 +32,10 @@ class AllowedNumbersService {
     try {
       final numbers = await getAllAllowedNumbers();
 
-      // Check for duplicates using phone number matching
+      // Check for duplicates using simple equality (case-insensitive)
       final isDuplicate = numbers.any(
-        (n) => PhoneNumberUtils.matchPhoneNumber(
-          n.phoneNumber,
-          number.phoneNumber,
-        ),
+        (n) => n.phoneNumber.trim().toLowerCase() == 
+               number.phoneNumber.trim().toLowerCase(),
       );
 
       if (isDuplicate) {
@@ -83,36 +80,22 @@ class AllowedNumbersService {
     }
   }
 
-  // Check if a phone number is allowed
-  static Future<bool> isNumberAllowed(String phoneNumber) async {
+  // Check if a phone number or text is allowed (simple equality check)
+  static Future<bool> isNumberAllowed(String phoneNumberOrText) async {
     try {
       final numbers = await getAllAllowedNumbers();
       print(
-        'Checking if $phoneNumber is allowed. Total allowed numbers: ${numbers.length}',
+        'Checking if "$phoneNumberOrText" is allowed. Total allowed entries: ${numbers.length}',
       );
 
-      for (var number in numbers) {
-        final normalizedStored = PhoneNumberUtils.normalizePhoneNumber(
-          number.phoneNumber,
-        );
-        final normalizedReceived = PhoneNumberUtils.normalizePhoneNumber(
-          phoneNumber,
-        );
-        final matches = PhoneNumberUtils.matchPhoneNumber(
-          number.phoneNumber,
-          phoneNumber,
-        );
-        print(
-          '  Comparing stored: "${number.phoneNumber}" (normalized: "$normalizedStored") with received: "$phoneNumber" (normalized: "$normalizedReceived") -> Match: $matches',
-        );
-      }
-
+      // Simple equality check (case-insensitive for text)
       final result = numbers.any(
-        (n) => PhoneNumberUtils.matchPhoneNumber(n.phoneNumber, phoneNumber),
+        (n) => n.phoneNumber.trim().toLowerCase() == 
+               phoneNumberOrText.trim().toLowerCase(),
       );
 
       print(
-        'Final result: $phoneNumber is ${result ? "ALLOWED" : "NOT ALLOWED"}',
+        'Final result: "$phoneNumberOrText" is ${result ? "ALLOWED" : "NOT ALLOWED"}',
       );
       return result;
     } catch (e) {

@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../models/allowed_number.dart';
-import '../services/phone_number_utils.dart';
 
 class NumberDialog extends StatefulWidget {
   final AllowedNumber? number;
@@ -44,12 +42,9 @@ class _NumberDialogState extends State<NumberDialog> {
 
   String? _validatePhone(String? value) {
     if (value == null || value.trim().isEmpty) {
-      return 'Please enter a phone number';
+      return 'Please enter a phone number or text';
     }
-    final normalized = PhoneNumberUtils.normalizePhoneNumber(value);
-    if (!PhoneNumberUtils.isValidPhoneNumber(normalized)) {
-      return 'Please enter a valid phone number';
-    }
+    // Allow both numbers and text - just check it's not empty
     return null;
   }
 
@@ -60,12 +55,11 @@ class _NumberDialogState extends State<NumberDialog> {
 
     setState(() => _isLoading = true);
 
-    final normalizedPhone = PhoneNumberUtils.normalizePhoneNumber(
-      _phoneController.text,
-    );
+    // Store the phone number or text as-is (no normalization for text)
+    final phoneOrText = _phoneController.text.trim();
     final number = AllowedNumber(
       id: widget.number?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
-      phoneNumber: normalizedPhone,
+      phoneNumber: phoneOrText,
       name: _nameController.text.trim(),
       createdAt: widget.number?.createdAt ?? DateTime.now(),
     );
@@ -118,8 +112,8 @@ class _NumberDialogState extends State<NumberDialog> {
               TextFormField(
                 controller: _phoneController,
                 decoration: InputDecoration(
-                  labelText: 'Phone Number',
-                  hintText: 'Enter phone number (e.g., +1234567890)',
+                  labelText: 'Phone Number or Text',
+                  hintText: 'Enter phone number or text (e.g., +1234567890 or "Bank")',
                   prefixIcon: const Icon(Icons.phone),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -127,10 +121,7 @@ class _NumberDialogState extends State<NumberDialog> {
                   filled: true,
                   fillColor: Colors.grey[50],
                 ),
-                keyboardType: TextInputType.phone,
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[\d\s\-+()]')),
-                ],
+                keyboardType: TextInputType.text,
                 validator: _validatePhone,
               ),
               const SizedBox(height: 24),

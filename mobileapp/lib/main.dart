@@ -11,8 +11,9 @@ import 'dart:async';
 
 import 'package:http/http.dart' as http;
 import 'services/allowed_numbers_service.dart';
-import 'services/phone_number_utils.dart';
 import 'services/user_service.dart';
+import 'services/sms_storage_service.dart';
+import 'models/sms_message.dart';
 import 'widgets/sms_card.dart';
 import 'widgets/empty_state.dart';
 import 'pages/allowed_numbers_page.dart';
@@ -24,6 +25,9 @@ Future<void> main() async {
 
   // Request SMS permission automatically
   await _requestSmsPermission();
+
+  // Request notification permission (required for Android 13+)
+  await _requestNotificationPermission();
 
   // Create notification channel FIRST - must exist before service starts
   try {
@@ -92,6 +96,38 @@ Future<void> _requestSmsPermission() async {
   }
 }
 
+// Request notification permission (required for Android 13+ / API 33+)
+Future<void> _requestNotificationPermission() async {
+  try {
+    // Check current permission status
+    final notificationStatus = await Permission.notification.status;
+
+    if (notificationStatus.isDenied) {
+      // Request permission
+      final result = await Permission.notification.request();
+      if (result.isGranted) {
+        print('Notification permission granted automatically');
+      } else if (result.isPermanentlyDenied) {
+        print(
+          'Notification permission permanently denied - user needs to enable in settings',
+        );
+      } else {
+        print('Notification permission denied by user');
+      }
+    } else if (notificationStatus.isGranted) {
+      print('Notification permission already granted');
+    } else if (notificationStatus.isPermanentlyDenied) {
+      print('Notification permission permanently denied');
+    } else if (notificationStatus.isRestricted) {
+      print('Notification permission is restricted');
+    }
+  } catch (e) {
+    print('Error requesting notification permission: $e');
+    // On Android versions below 13, notification permission is granted by default
+    // so this error can be safely ignored
+  }
+}
+
 Future<void> _createNotificationChannel() async {
   try {
     final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
@@ -116,8 +152,7 @@ Future<void> _createNotificationChannel() async {
 
     await flutterLocalNotificationsPlugin
         .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
+            AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
   } catch (e) {
     print('Error creating notification channel: $e');
@@ -147,8 +182,7 @@ Future<void> initializeService() async {
 
     await flutterLocalNotificationsPlugin
         .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
+            AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
   } catch (e) {
     print('Error ensuring notification channel exists: $e');
@@ -262,6 +296,37 @@ void onStart(ServiceInstance service) async {
         body: jsonEncode({'userId': userId, 'smsText': ' ${sms.body}'}),
       );
       print("API Response: ${response.statusCode} - ${response.body}");
+
+      // Parse API response
+      ApiResponse? apiResponse;
+      if (response.statusCode == 200) {
+        try {
+          final responseJson = jsonDecode(response.body) as Map<String, dynamic>;
+          apiResponse = ApiResponse.fromApiJson(responseJson);
+          print("Parsed API response - isBankMessage: ${apiResponse.isBankMessage}, isSuccess: ${apiResponse.isSuccess}");
+        } catch (e) {
+          print("Error parsing API response: $e");
+        }
+      }
+
+      // Save message with API response
+      // Generate unique ID using address, date, and body hash
+      final messageId = '${sms.address}_${sms.date}_${sms.body.hashCode}';
+      final message = SmsMessage(
+        id: messageId,
+        address: sms.address,
+        body: sms.body,
+        date: sms.date,
+        apiResponse: apiResponse,
+      );
+      
+      // Only save if it's a relevant bank message
+      if (message.isRelevantBankMessage) {
+        await SmsStorageService.saveMessage(message);
+        print("Saved relevant bank message: ${message.id}");
+      } else {
+        print("Message is not a relevant bank message - not saving");
+      }
     } catch (e) {
       print("API call failed: $e");
     }
@@ -326,7 +391,7 @@ class SmsHomePage extends StatefulWidget {
 }
 
 class _SmsHomePageState extends State<SmsHomePage> {
-  List<AndroidSMSMessage> _filteredMessages = [];
+  List<SmsMessage> _filteredMessages = [];
   bool _loading = true;
   String? _error;
   bool _isRunning = false;
@@ -436,31 +501,13 @@ class _SmsHomePageState extends State<SmsHomePage> {
         return;
       }
 
-      // Fetch messages asynchronously
-      final msgs = await AndroidSMSReader.fetchMessages(
-        type: AndroidSMSType.inbox,
-        start: 0,
-        count: 50,
-      );
+      // Load only relevant bank messages (isBankMessage: true) from storage
+      final relevantMessages = await SmsStorageService.getRelevantBankMessages();
 
       if (!mounted) return;
 
-      // Filter messages by allowed numbers
-      final allowedNumbers = await AllowedNumbersService.getAllAllowedNumbers();
-      final filtered = msgs.where((msg) {
-        if (allowedNumbers.isEmpty) {
-          return false; // Show nothing if no allowed numbers
-        }
-        return allowedNumbers.any(
-          (number) => PhoneNumberUtils.matchPhoneNumber(
-            number.phoneNumber,
-            msg.address,
-          ),
-        );
-      }).toList();
-
       setState(() {
-        _filteredMessages = filtered;
+        _filteredMessages = relevantMessages;
         _loading = false;
       });
     } catch (e) {
@@ -618,11 +665,11 @@ class _SmsHomePageState extends State<SmsHomePage> {
                               Text(
                                 _isToggling
                                     ? (_isRunning
-                                          ? 'Stopping...'
-                                          : 'Starting...')
+                                        ? 'Stopping...'
+                                        : 'Starting...')
                                     : (_isRunning
-                                          ? 'Monitoring SMS messages'
-                                          : 'Service is stopped'),
+                                        ? 'Monitoring SMS messages'
+                                        : 'Service is stopped'),
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: Colors.grey[600],
@@ -664,54 +711,84 @@ class _SmsHomePageState extends State<SmsHomePage> {
                   child: _loading
                       ? const Center(child: CircularProgressIndicator())
                       : _error != null
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(32.0),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  _error == 'permanently_denied'
-                                      ? Icons.settings
-                                      : Icons.error_outline,
-                                  size: 64,
-                                  color: Colors.red[300],
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  _error == 'permanently_denied'
-                                      ? 'SMS Permission Required'
-                                      : _error!,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: Colors.grey[700],
-                                    fontSize: 16,
-                                  ),
-                                ),
-                                if (_error == 'permanently_denied') ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Please enable SMS permission in app settings',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: Colors.grey[600],
-                                      fontSize: 14,
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(32.0),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      _error == 'permanently_denied'
+                                          ? Icons.settings
+                                          : Icons.error_outline,
+                                      size: 64,
+                                      color: Colors.red[300],
                                     ),
-                                  ),
-                                ],
-                                const SizedBox(height: 24),
-                                if (_error == 'permanently_denied')
-                                  ElevatedButton.icon(
-                                    onPressed: () async {
-                                      await openAppSettings();
-                                      // Reload after returning from settings
-                                      await Future.delayed(
-                                        const Duration(seconds: 1),
-                                      );
-                                      _loadMessages();
-                                    },
-                                    icon: const Icon(Icons.settings),
-                                    label: const Text('Open Settings'),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      _error == 'permanently_denied'
+                                          ? 'SMS Permission Required'
+                                          : _error!,
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: Colors.grey[700],
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                    if (_error == 'permanently_denied') ...[
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Please enable SMS permission in app settings',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
+                                    const SizedBox(height: 24),
+                                    if (_error == 'permanently_denied')
+                                      ElevatedButton.icon(
+                                        onPressed: () async {
+                                          await openAppSettings();
+                                          // Reload after returning from settings
+                                          await Future.delayed(
+                                            const Duration(seconds: 1),
+                                          );
+                                          _loadMessages();
+                                        },
+                                        icon: const Icon(Icons.settings),
+                                        label: const Text('Open Settings'),
+                                        style: ElevatedButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 24,
+                                            vertical: 12,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                          ),
+                                        ),
+                                      )
+                                    else
+                                      ElevatedButton(
+                                        onPressed: _loadMessages,
+                                        child: const Text('Retry'),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          : _filteredMessages.isEmpty
+                              ? EmptyState(
+                                  icon: Icons.message,
+                                  title: 'No filtered messages',
+                                  message:
+                                      'Add allowed numbers to see SMS messages from those contacts',
+                                  action: ElevatedButton.icon(
+                                    onPressed: _navigateToAllowedNumbers,
+                                    icon: const Icon(Icons.add),
+                                    label: const Text('Manage Numbers'),
                                     style: ElevatedButton.styleFrom(
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 24,
@@ -721,48 +798,20 @@ class _SmsHomePageState extends State<SmsHomePage> {
                                         borderRadius: BorderRadius.circular(12),
                                       ),
                                     ),
-                                  )
-                                else
-                                  ElevatedButton(
-                                    onPressed: _loadMessages,
-                                    child: const Text('Retry'),
                                   ),
-                              ],
-                            ),
-                          ),
-                        )
-                      : _filteredMessages.isEmpty
-                      ? EmptyState(
-                          icon: Icons.message,
-                          title: 'No filtered messages',
-                          message:
-                              'Add allowed numbers to see SMS messages from those contacts',
-                          action: ElevatedButton.icon(
-                            onPressed: _navigateToAllowedNumbers,
-                            icon: const Icon(Icons.add),
-                            label: const Text('Manage Numbers'),
-                            style: ElevatedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 24,
-                                vertical: 12,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                          ),
-                        )
-                      : RefreshIndicator(
-                          onRefresh: _loadMessages,
-                          child: ListView.builder(
-                            padding: const EdgeInsets.only(top: 8, bottom: 16),
-                            itemCount: _filteredMessages.length,
-                            itemBuilder: (context, i) {
-                              final m = _filteredMessages[i];
-                              return SmsCard(message: m);
-                            },
-                          ),
-                        ),
+                                )
+                              : RefreshIndicator(
+                                  onRefresh: _loadMessages,
+                                  child: ListView.builder(
+                                    padding: const EdgeInsets.only(
+                                        top: 8, bottom: 16),
+                                    itemCount: _filteredMessages.length,
+                                    itemBuilder: (context, i) {
+                                      final m = _filteredMessages[i];
+                                      return SmsCard(message: m);
+                                    },
+                                  ),
+                                ),
                 ),
               ),
             ],

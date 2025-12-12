@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/sms_message.dart';
 import '../services/phone_number_utils.dart';
+import '../services/allowed_numbers_service.dart';
 
 class SmsCard extends StatelessWidget {
   final SmsMessage message;
@@ -46,78 +47,84 @@ class SmsCard extends StatelessWidget {
     return colors[index.abs()];
   }
 
-  String _getInitials(String? address) {
-    if (address == null || address.isEmpty) {
+  String _getInitials(String? name) {
+    if (name == null || name.isEmpty) {
       return '?';
     }
-    final formatted = PhoneNumberUtils.formatPhoneNumber(address);
-    if (formatted.length >= 2) {
-      return formatted.substring(0, 1).toUpperCase();
+    // Get first letter of name (or first letter of first word)
+    final trimmed = name.trim();
+    if (trimmed.isNotEmpty) {
+      return trimmed.substring(0, 1).toUpperCase();
     }
     return '?';
   }
 
   @override
   Widget build(BuildContext context) {
-    final formattedNumber = PhoneNumberUtils.formatPhoneNumber(message.address);
     final avatarColor = _getAvatarColor(message.address);
-    final initials = _getInitials(message.address);
+    
+    // Use FutureBuilder to get the name from allowed numbers
+    return FutureBuilder<String>(
+      future: AllowedNumbersService.getNameForNumber(message.address),
+      builder: (context, snapshot) {
+        final displayName = snapshot.data ?? message.address;
+        final initials = _getInitials(displayName);
 
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Avatar
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      avatarColor,
-                      avatarColor.withValues(alpha: 0.7),
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  shape: BoxShape.circle,
-                ),
-                child: Center(
-                  child: Text(
-                    initials,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
+        return Card(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Avatar
+                  Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          avatarColor,
+                          avatarColor.withValues(alpha: 0.7),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        initials,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              // Content
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  const SizedBox(width: 16),
+                  // Content
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Row(
-                            children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Row(
+                                children: [
                               Expanded(
                                 child: Text(
-                                  formattedNumber,
+                                  displayName,
                                   style: const TextStyle(
                                     fontSize: 16,
                                     fontWeight: FontWeight.bold,
@@ -127,36 +134,18 @@ class SmsCard extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              // API Success Flag
-                              if (message.isApiSuccess)
+                              // API Status Icon (Success or Fail)
+                              if (message.apiResponse != null)
                                 Container(
                                   margin: const EdgeInsets.only(left: 8),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.green,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: const Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.check_circle,
-                                        size: 12,
-                                        color: Colors.white,
-                                      ),
-                                      SizedBox(width: 2),
-                                      Text(
-                                        'API',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
+                                  child: Icon(
+                                    message.isApiSuccess
+                                        ? Icons.check_circle
+                                        : Icons.error,
+                                    size: 20,
+                                    color: message.isApiSuccess
+                                        ? Colors.green
+                                        : Colors.red,
                                   ),
                                 ),
                             ],
@@ -232,6 +221,8 @@ class SmsCard extends StatelessWidget {
           ),
         ),
       ),
+        );
+      },
     );
   }
 }

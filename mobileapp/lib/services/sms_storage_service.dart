@@ -1,9 +1,17 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/sms_message.dart';
 
 class SmsStorageService {
   static const String _storageKey = 'sms_messages';
+  
+  // Stream controller to notify when messages are updated
+  static final StreamController<void> _messageUpdateController = 
+      StreamController<void>.broadcast();
+  
+  // Stream to listen for message updates
+  static Stream<void> get onMessageUpdate => _messageUpdateController.stream;
 
   // Save a message with API response
   static Future<bool> saveMessage(SmsMessage message) async {
@@ -24,7 +32,14 @@ class SmsStorageService {
         messages.removeRange(1000, messages.length);
       }
 
-      return await _saveMessages(messages);
+      final success = await _saveMessages(messages);
+      
+      // Notify listeners that messages were updated
+      if (success && message.isRelevantBankMessage) {
+        _messageUpdateController.add(null);
+      }
+      
+      return success;
     } catch (e) {
       print('Error saving message: $e');
       return false;

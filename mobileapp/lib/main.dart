@@ -301,9 +301,11 @@ void onStart(ServiceInstance service) async {
       ApiResponse? apiResponse;
       if (response.statusCode == 200) {
         try {
-          final responseJson = jsonDecode(response.body) as Map<String, dynamic>;
+          final responseJson =
+              jsonDecode(response.body) as Map<String, dynamic>;
           apiResponse = ApiResponse.fromApiJson(responseJson);
-          print("Parsed API response - isBankMessage: ${apiResponse.isBankMessage}, isSuccess: ${apiResponse.isSuccess}");
+          print(
+              "Parsed API response - isBankMessage: ${apiResponse.isBankMessage}, isSuccess: ${apiResponse.isSuccess}");
         } catch (e) {
           print("Error parsing API response: $e");
         }
@@ -319,7 +321,7 @@ void onStart(ServiceInstance service) async {
         date: sms.date,
         apiResponse: apiResponse,
       );
-      
+
       // Only save if it's a relevant bank message
       if (message.isRelevantBankMessage) {
         await SmsStorageService.saveMessage(message);
@@ -390,21 +392,72 @@ class SmsHomePage extends StatefulWidget {
   State<SmsHomePage> createState() => _SmsHomePageState();
 }
 
-class _SmsHomePageState extends State<SmsHomePage> {
+class _SmsHomePageState extends State<SmsHomePage> with WidgetsBindingObserver {
   List<SmsMessage> _filteredMessages = [];
   bool _loading = true;
   String? _error;
   bool _isRunning = false;
   bool _isToggling = false;
+  StreamSubscription? _messageUpdateSubscription;
+  Timer? _periodicRefreshTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+
+    // Listen for message updates from storage service
+    _messageUpdateSubscription = SmsStorageService.onMessageUpdate.listen((_) {
+      if (mounted) {
+        print('New message detected, refreshing list...');
+        _loadMessages();
+      }
+    });
+
     // Defer heavy operations until after the first frame is rendered
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkServiceStatus();
       _loadMessages(); // Load UI messages separately
+
+      // Start periodic refresh when app is in foreground
+      _startPeriodicRefresh();
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _messageUpdateSubscription?.cancel();
+    _periodicRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // App came to foreground - refresh messages and start periodic refresh
+      _loadMessages();
+      _startPeriodicRefresh();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      // App went to background - stop periodic refresh
+      _stopPeriodicRefresh();
+    }
+  }
+
+  void _startPeriodicRefresh() {
+    _stopPeriodicRefresh(); // Stop any existing timer
+    // Refresh every 5 seconds when app is open
+    _periodicRefreshTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (mounted) {
+        _loadMessages();
+      }
+    });
+  }
+
+  void _stopPeriodicRefresh() {
+    _periodicRefreshTimer?.cancel();
+    _periodicRefreshTimer = null;
   }
 
   Future<void> _checkServiceStatus() async {
@@ -502,7 +555,8 @@ class _SmsHomePageState extends State<SmsHomePage> {
       }
 
       // Load only relevant bank messages (isBankMessage: true) from storage
-      final relevantMessages = await SmsStorageService.getRelevantBankMessages();
+      final relevantMessages =
+          await SmsStorageService.getRelevantBankMessages();
 
       if (!mounted) return;
 

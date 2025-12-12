@@ -80,6 +80,27 @@ class AllowedNumbersService {
     }
   }
 
+  // Get name for a phone number or text (returns phone number if not found)
+  static Future<String> getNameForNumber(String phoneNumberOrText) async {
+    try {
+      final numbers = await getAllAllowedNumbers();
+      final matching = numbers.firstWhere(
+        (n) => n.phoneNumber.trim().toLowerCase() == 
+               phoneNumberOrText.trim().toLowerCase(),
+        orElse: () => AllowedNumber(
+          id: '',
+          phoneNumber: phoneNumberOrText,
+          name: phoneNumberOrText, // Return phone number as fallback
+          createdAt: DateTime.now(),
+        ),
+      );
+      return matching.name;
+    } catch (e) {
+      print('Error getting name for number: $e');
+      return phoneNumberOrText; // Return phone number as fallback
+    }
+  }
+
   // Check if a phone number or text is allowed (simple equality check)
   static Future<bool> isNumberAllowed(String phoneNumberOrText) async {
     try {

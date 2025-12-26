@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/sms_message.dart';
-import '../services/phone_number_utils.dart';
 import '../services/allowed_numbers_service.dart';
 
 class SmsCard extends StatelessWidget {
@@ -57,6 +57,69 @@ class SmsCard extends StatelessWidget {
       return trimmed.substring(0, 1).toUpperCase();
     }
     return '?';
+  }
+
+  // Send SMS - opens SMS composer
+  Future<void> _sendSMS(BuildContext context, String phoneNumber, String message) async {
+    try {
+      // Remove any non-digit characters except + for international numbers
+      final cleanNumber = phoneNumber.replaceAll(RegExp(r'[^\d+]'), '');
+      
+      // Create SMS URL
+      final uri = Uri.parse('sms:$cleanNumber${message.isNotEmpty ? '?body=${Uri.encodeComponent(message)}' : ''}');
+      
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+      } else {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not open SMS composer'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error opening SMS: $e'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
+  // Forward SMS - opens SMS composer with message body pre-filled
+  Future<void> _forwardSMS(BuildContext context, String messageBody) async {
+    try {
+      // Create SMS URL with body but no recipient (user can choose)
+      final uri = Uri.parse('sms:?body=${Uri.encodeComponent(messageBody)}');
+      
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+      } else {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not open SMS composer'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error forwarding SMS: $e'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -169,6 +232,43 @@ class SmsCard extends StatelessWidget {
                       ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
+                    ),
+                    // Action buttons: Reply and Forward
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Row(
+                        children: [
+                          // Reply button
+                          TextButton.icon(
+                            onPressed: () => _sendSMS(context, message.address, ''),
+                            icon: const Icon(Icons.reply, size: 16),
+                            label: const Text('Reply'),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 4,
+                              ),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // Forward button
+                          TextButton.icon(
+                            onPressed: () => _forwardSMS(context, message.body),
+                            icon: const Icon(Icons.forward, size: 16),
+                            label: const Text('Forward'),
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 4,
+                              ),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     // Show transaction details if available
                     if (message.apiResponse != null &&

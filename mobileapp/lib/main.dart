@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:android_sms_reader/android_sms_reader.dart';
@@ -23,17 +24,33 @@ import 'pages/splash_page.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Request SMS permission automatically
-  await _requestSmsPermission();
+  // Only request Android-specific permissions on Android
+  if (Platform.isAndroid) {
+    // Request SMS permission automatically
+    await _requestSmsPermission();
 
-  // Request notification permission (required for Android 13+)
-  await _requestNotificationPermission();
+    // Request notification permission (required for Android 13+)
+    await _requestNotificationPermission();
 
-  // Create notification channel FIRST - must exist before service starts
-  try {
-    await _createNotificationChannel();
-  } catch (e) {
-    print('Failed to create notification channel: $e');
+    // Create notification channel FIRST - must exist before service starts
+    try {
+      await _createNotificationChannel();
+    } catch (e) {
+      print('Failed to create notification channel: $e');
+    }
+  } else if (Platform.isIOS) {
+    // Request SMS permission for iOS (note: iOS restricts SMS access)
+    await _requestSmsPermission();
+    
+    // Request notification permission for iOS
+    await _requestNotificationPermission();
+    
+    // Initialize iOS notifications
+    try {
+      await _initializeIOSNotifications();
+    } catch (e) {
+      print('Failed to initialize iOS notifications: $e');
+    }
   }
 
   // Initialize user ID on first app load
@@ -49,17 +66,19 @@ Future<void> main() async {
   runApp(const SmsApp());
 
   // Initialize service after app starts (non-blocking)
-  // Channel already exists, so service can start safely
-  Future.microtask(() async {
-    try {
-      // Small delay to ensure app is fully started
-      await Future.delayed(const Duration(milliseconds: 300));
-      await initializeService();
-    } catch (e) {
-      print('Failed to initialize background service: $e');
-      // App continues to run even if service fails
-    }
-  });
+  // Only on Android - iOS doesn't support background services the same way
+  if (Platform.isAndroid) {
+    Future.microtask(() async {
+      try {
+        // Small delay to ensure app is fully started
+        await Future.delayed(const Duration(milliseconds: 300));
+        await initializeService();
+      } catch (e) {
+        print('Failed to initialize background service: $e');
+        // App continues to run even if service fails
+      }
+    });
+  }
 }
 
 // Request SMS permission automatically
@@ -72,7 +91,7 @@ Future<void> _requestSmsPermission() async {
       // Request permission
       final result = await Permission.sms.request();
       if (result.isGranted) {
-        print('SMS permission granted automatically');
+        print('SMS permission granted');
       } else if (result.isPermanentlyDenied) {
         print(
           'SMS permission permanently denied - user needs to enable in settings',
@@ -84,14 +103,23 @@ Future<void> _requestSmsPermission() async {
       print('SMS permission already granted');
     } else if (smsStatus.isPermanentlyDenied) {
       print('SMS permission permanently denied');
+    } else if (smsStatus.isRestricted) {
+      print('SMS permission is restricted (iOS limitation)');
     }
   } catch (e) {
     print('Error requesting SMS permission: $e');
-    // Fallback to android_sms_reader method
-    try {
-      await AndroidSMSReader.requestPermissions();
-    } catch (e2) {
-      print('Fallback permission request also failed: $e2');
+    
+    // On Android, try fallback to android_sms_reader method
+    if (Platform.isAndroid) {
+      try {
+        await AndroidSMSReader.requestPermissions();
+      } catch (e2) {
+        print('Fallback permission request also failed: $e2');
+      }
+    } else if (Platform.isIOS) {
+      // iOS doesn't allow SMS reading - this is expected
+      print('Note: iOS does not allow third-party apps to read SMS messages for privacy reasons.');
+      print('SMS reading functionality is only available on Android.');
     }
   }
 }
@@ -128,7 +156,50 @@ Future<void> _requestNotificationPermission() async {
   }
 }
 
+// Initialize iOS notifications
+Future<void> _initializeIOSNotifications() async {
+  if (!Platform.isIOS) {
+    return;
+  }
+  
+  try {
+    final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+    
+    // Request notification permissions for iOS
+    final iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: false,
+    );
+    
+    // For version 17.x, use the iOS parameter (capital I and S)
+    final initSettings = InitializationSettings(
+      iOS: iosSettings,
+    );
+    
+    await flutterLocalNotificationsPlugin.initialize(initSettings);
+    print('iOS notifications initialized successfully');
+  } catch (e) {
+    print('Error initializing iOS notifications: $e');
+    // Try alternative initialization without iOS settings
+    try {
+      final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+      await flutterLocalNotificationsPlugin.initialize(
+        const InitializationSettings(),
+      );
+      print('iOS notifications initialized with default settings');
+    } catch (e2) {
+      print('Failed to initialize iOS notifications with default settings: $e2');
+    }
+  }
+}
+
+// Create notification channel (Android only)
 Future<void> _createNotificationChannel() async {
+  if (!Platform.isAndroid) {
+    return;
+  }
+  
   try {
     final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
@@ -162,6 +233,12 @@ Future<void> _createNotificationChannel() async {
 
 @pragma('vm:entry-point')
 Future<void> initializeService() async {
+  // Background services are Android-only
+  if (!Platform.isAndroid) {
+    print('Background service is Android-only, skipping on iOS');
+    return;
+  }
+  
   // Ensure notification channel exists before starting service
   try {
     final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
@@ -516,7 +593,32 @@ class _SmsHomePageState extends State<SmsHomePage> with WidgetsBindingObserver {
     });
 
     try {
-      // Check permission status first
+      // iOS doesn't support SMS reading - show stored messages only
+      if (Platform.isIOS) {
+        // Load only relevant bank messages from storage (previously saved)
+        final relevantMessages =
+            await SmsStorageService.getRelevantBankMessages();
+
+        if (!mounted) return;
+
+        setState(() {
+          _filteredMessages = relevantMessages;
+          _loading = false;
+        });
+        
+        // Show info message about iOS limitation
+        if (relevantMessages.isEmpty) {
+          if (mounted) {
+            setState(() {
+              _error = 'ios_limitation';
+              _loading = false;
+            });
+          }
+        }
+        return;
+      }
+
+      // Android: Check permission status first
       final smsStatus = await Permission.sms.status;
 
       bool granted = false;
@@ -539,7 +641,7 @@ class _SmsHomePageState extends State<SmsHomePage> with WidgetsBindingObserver {
       }
 
       // Fallback to android_sms_reader if permission_handler didn't work
-      if (!granted) {
+      if (!granted && Platform.isAndroid) {
         granted = await AndroidSMSReader.requestPermissions();
       }
 
@@ -774,15 +876,21 @@ class _SmsHomePageState extends State<SmsHomePage> with WidgetsBindingObserver {
                                     Icon(
                                       _error == 'permanently_denied'
                                           ? Icons.settings
-                                          : Icons.error_outline,
+                                          : _error == 'ios_limitation'
+                                              ? Icons.info_outline
+                                              : Icons.error_outline,
                                       size: 64,
-                                      color: Colors.red[300],
+                                      color: _error == 'ios_limitation'
+                                          ? Colors.blue[300]
+                                          : Colors.red[300],
                                     ),
                                     const SizedBox(height: 16),
                                     Text(
                                       _error == 'permanently_denied'
                                           ? 'SMS Permission Required'
-                                          : _error!,
+                                          : _error == 'ios_limitation'
+                                              ? 'iOS Limitation'
+                                              : _error!,
                                       textAlign: TextAlign.center,
                                       style: TextStyle(
                                         color: Colors.grey[700],
@@ -793,6 +901,16 @@ class _SmsHomePageState extends State<SmsHomePage> with WidgetsBindingObserver {
                                       const SizedBox(height: 8),
                                       Text(
                                         'Please enable SMS permission in app settings',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ] else if (_error == 'ios_limitation') ...[
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'iOS does not allow third-party apps to read SMS messages for privacy reasons.\n\nSMS reading is only available on Android devices.',
                                         textAlign: TextAlign.center,
                                         style: TextStyle(
                                           color: Colors.grey[600],
@@ -823,6 +941,16 @@ class _SmsHomePageState extends State<SmsHomePage> with WidgetsBindingObserver {
                                                 BorderRadius.circular(12),
                                           ),
                                         ),
+                                      )
+                                    else if (_error == 'ios_limitation')
+                                      ElevatedButton(
+                                        onPressed: () {
+                                          setState(() {
+                                            _error = null;
+                                            _loading = false;
+                                          });
+                                        },
+                                        child: const Text('OK'),
                                       )
                                     else
                                       ElevatedButton(
